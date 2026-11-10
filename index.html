@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fondo ASCII con colores editables</title>
+<style>
+:root{--bg:#0b1118;--panel:#ffffffee;--ink:#16202c;--line:#16202c22}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--panel:#141c26ee;--ink:#e8eef5;--line:#e8eef522}}
+:root[data-theme="dark"]{--panel:#141c26ee;--ink:#e8eef5;--line:#e8eef522}
+html,body{height:100%;margin:0;background:var(--bg);overflow:hidden;font-family:system-ui,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.fade{position:fixed;inset:0;pointer-events:none;background:linear-gradient(to top,var(--bg) 0%,transparent 40%)}
+/* ===== Panel de colores ===== */
+.panel{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:max(16px,env(safe-area-inset-bottom,0px));
+  background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+  width:220px;font-size:14px;backdrop-filter:blur(8px)}
+.panel h2{font-size:13px;margin:0 0 10px;font-weight:600;letter-spacing:.02em}
+.row{display:flex;align-items:center;justify-content:space-between;margin:8px 0}
+.row input{width:44px;height:28px;border:1px solid var(--line);border-radius:6px;background:none;padding:2px;cursor:pointer}
+.btns{display:flex;gap:8px;margin-top:12px}
+button{flex:1;font:inherit;font-size:13px;color:var(--ink);background:none;border:1px solid var(--line);border-radius:8px;padding:6px 0;cursor:pointer}
+.panel.min{width:auto;padding:8px 12px}.panel.min .body{display:none}.panel.min h2{margin:0}
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+<div class="fade"></div>
+
+<div class="panel" id="panel">
+  <h2 id="toggle" style="cursor:pointer">Colores ▾</h2>
+  <div class="body">
+    <label class="row">Fondo <input type="color" id="bg"></label>
+    <label class="row">Ondas (cielo) <input type="color" id="glyph"></label>
+    <label class="row">Montaña <input type="color" id="warm"></label>
+    <div class="btns"><button id="reset">Restablecer</button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  /* ===== CONFIGURACIÓN: cambia aquí los valores por defecto ===== */
+  var DEFAULTS={bg:'#0b1118',glyph:'#7096be',warm:'#aa3e38'};
+  var RAMP=' .:-=+*#%@01';   // caracteres, de menos a más densos
+  var CW=9,CH=14;            // tamaño de cada celda en px
+  var LOOP=10000;            // duración del bucle en ms
+
+  var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+  var W,H,cols,rows,dpr,mx=-999,my=-999,ridgeCache=[];
+  var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var colors=Object.assign({},DEFAULTS);
+  var glyphRGB,warmRGB;
+
+  try{var s=JSON.parse(localStorage.getItem('ascii-colors'));if(s)Object.assign(colors,s)}catch(e){}
+
+  function hexToRgb(h){var n=parseInt(h.slice(1),16);return((n>>16)&255)+','+((n>>8)&255)+','+(n&255)}
+  function applyColors(){
+    document.documentElement.style.setProperty('--bg',colors.bg);
+    glyphRGB=hexToRgb(colors.glyph);warmRGB=hexToRgb(colors.warm);
+    ['bg','glyph','warm'].forEach(function(k){document.getElementById(k).value=colors[k]});
+    try{localStorage.setItem('ascii-colors',JSON.stringify(colors))}catch(e){}
+    if(reduce)draw(0);
+  }
+  ['bg','glyph','warm'].forEach(function(k){
+    document.getElementById(k).addEventListener('input',function(e){colors[k]=e.target.value;applyColors()});
+  });
+  document.getElementById('reset').onclick=function(){colors=Object.assign({},DEFAULTS);applyColors()};
+  document.getElementById('toggle').onclick=function(){
+    var p=document.getElementById('panel');p.classList.toggle('min');
+    this.textContent=p.classList.contains('min')?'Colores ▸':'Colores ▾';
+  };
+
+  /* ===== Silueta de la montaña ===== */
+  function ridge(u){
+    return 0.52+0.16*Math.sin(u*5.1+1.2)*0.6+0.12*Math.sin(u*11+0.4)*0.4-0.18*Math.exp(-Math.pow((u-0.42)*5,2));
+  }
+  function resize(){
+    dpr=Math.min(devicePixelRatio||1,2);
+    W=innerWidth;H=innerHeight;
+    cv.width=W*dpr;cv.height=H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    cols=Math.ceil(W/CW);rows=Math.ceil(H/CH);
+    ridgeCache=[];for(var i=0;i<cols;i++)ridgeCache.push(ridge(i/cols));
+  }
+
+  /* ===== Dibujo ===== */
+  function draw(t){
+    var ph=2*Math.PI*((t%LOOP)/LOOP);
+    ctx.clearRect(0,0,W,H);
+    ctx.font=CH+'px ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace';
+    ctx.textBaseline='top';
+    var last='';
+    for(var j=0;j<rows;j++){
+      var v=j/rows,y=j*CH;
+      for(var i=0;i<cols;i++){
+        var u=i/cols,x=i*CW;
+        var f=(Math.sin(u*14+ph+v*3)+Math.cos(v*9-ph+u*4)+2)/4;
+        var dx=x-mx,dy=y-my,d=Math.sqrt(dx*dx+dy*dy);
+        f+=Math.sin(d*0.05-t*0.004)*Math.exp(-d/140)*0.5;   // onda del cursor
+        var m=v>ridgeCache[i],a,col;
+        if(m){f=f*0.5+0.35;a=0.25+0.4*f;col=warmRGB}
+        else{f=f*0.75+0.1;a=0.4+0.6*f;col=glyphRGB}
+        f=Math.max(0,Math.min(0.999,f));
+        var ch=RAMP.charAt(Math.floor(f*RAMP.length));
+        if(ch===' ')continue;
+        if(col!==last){ctx.fillStyle='rgb('+col+')';last=col}
+        ctx.globalAlpha=a;
+        ctx.fillText(ch,x,y);
+      }
+    }
+    ctx.globalAlpha=1;
+  }
+  function loop(t){draw(t);requestAnimationFrame(loop)}
+
+  resize();applyColors();
+  addEventListener('resize',function(){resize();if(reduce)draw(0)});
+  addEventListener('pointermove',function(e){mx=e.clientX;my=e.clientY});
+  addEventListener('pointerleave',function(){mx=my=-999});
+  if(!reduce)requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
